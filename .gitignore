@@ -1,0 +1,2 @@
+# Keep large/private raw transactions out of this repo
+/repro_pipeline/data/raw/altana_cnx_transactions.csv
