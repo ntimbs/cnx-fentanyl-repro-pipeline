@@ -11,26 +11,20 @@ summary statistics table used in the study.
 
 Required raw inputs (source locations in this project)
 ------------------------------------------------------
-1) `repro_pipeline/data/raw/overdoseDeathsData_cleaned.csv` (CDC-style 12m rolling overdose counts)
+1) `overdoseDeathsData_cleaned.csv` (CDC 12m rolling overdose counts for synthetic opioids)
 2) `overdose_raw.csv` (monthly overdose counts; generated from item 1 by script 00, or provided directly)
-3) `Shipment Data/altana_cnx_transactions.csv` **NOTE: Proprietary Data - Aggregated monthly transactions are located in `shipments_monthly.csv`**
-4) `Drug Seizures/nationwide-drugs-fy19-fy22.csv`
-5) `Drug Seizures/nationwide-drugs-fy23-fy26-dec.csv`
-6) `tables/policy_table_updated_all.csv`
+3) `altana_cnx_transactions.csv` **NOTE: Proprietary Data - Aggregated monthly transactions are located in `shipments_monthly.csv`**
+4) `nationwide-drugs-fy19-fy22.csv`
+5) `nationwide-drugs-fy23-fy26-dec.csv`
+6) `policy_table_updated_all.csv`
 
 Pipeline scripts
 ----------------
 0) `repro_pipeline/scripts/00_transform_overdose_rolling12_to_monthly.R` (optional pre-step)
-   - Use this if your starting overdose file is a CDC-style trailing 12-month
-     count series (for example, `count` by month) and you need monthly counts.
-   - Implements constrained deconvolution:
-     - non-negative monthly counts,
-     - smoothness penalty on second differences,
-     - 12-month rolling identity fit to observed rolling counts.
+   - Use this to transform the CDC rolling 12-month overdose count 
+     series to a raw monthly count series.
    - Writes `overdose_raw.csv` with columns:
      - `date`, `variable`, `raw_count`
-   - Example:
-     - `Rscript repro_pipeline/scripts/00_transform_overdose_rolling12_to_monthly.R --input=\"repro_pipeline/data/raw/overdoseDeathsData_cleaned.csv\" --output=\"overdose_raw.csv\" --window=12 --lambda=25`
 
 1) `repro_pipeline/scripts/01_build_monthly_series.R`
    - Reads raw overdose, shipment, and seizure files.
@@ -60,7 +54,7 @@ Pipeline scripts
 
 Data construction details
 -------------------------
-The pipeline standardizes all source file column names to lowercase snake_case,
+The pipeline standardizes all source file column names to lowercase,
 then builds one monthly series per domain (`overdose_raw`, `tx_raw`,
 `seizure_lbs_raw`) keyed on `month` (first day of month).
 
@@ -70,7 +64,7 @@ Overdose data (CDC rolling-12-month source -> monthly raw series)
 - If your source data are CDC trailing 12-month counts, run:
   `repro_pipeline/scripts/00_transform_overdose_rolling12_to_monthly.R`
   first.
-- Inversion logic:
+- Transformation logic:
   - observed rolling series: `R_t = M_t + ... + M_(t-11)`
   - unknowns include observed months plus 11 latent pre-sample months
   - solve for monthly `M_t` using non-negative optimization with a smoothness
