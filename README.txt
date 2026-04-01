@@ -20,7 +20,7 @@ What this script does
 ---------------------
 1) Reads one monthly file containing shipments, seizures, and rolling-12 overdoses.
 2) Recovers monthly overdose counts from the rolling-12 overdose series.
-3) Builds analysis series and first differences.
+3) Builds analysis series.
 4) Produces the paper outputs:
    - `repro_pipeline/output/figures/plot_scaled_overlay_minimal_smooth_all_to_2025_06.png`
    - `repro_pipeline/output/figures/plot_changepoints_shipments_only.png`

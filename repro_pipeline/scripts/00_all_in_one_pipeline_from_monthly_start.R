@@ -254,12 +254,9 @@ overdose_fit <- recover_monthly_from_rolling(
 
 series_monthly <- series_input %>%
   mutate(
-    overdose_raw = as.integer(round(overdose_fit$monthly)),
-    d_overdose = overdose_raw - dplyr::lag(overdose_raw),
-    d_tx = tx_raw - dplyr::lag(tx_raw),
-    d_seizure_lbs = seizure_lbs_raw - dplyr::lag(seizure_lbs_raw)
+    overdose_raw = as.integer(round(overdose_fit$monthly))
   ) %>%
-  select(month, overdose_raw, tx_raw, seizure_lbs_raw, overdose_rolling_12m, d_overdose, d_tx, d_seizure_lbs)
+  select(month, overdose_raw, tx_raw, seizure_lbs_raw, overdose_rolling_12m)
 
 series_to_end <- series_monthly %>%
   filter(month <= END_MONTH)
