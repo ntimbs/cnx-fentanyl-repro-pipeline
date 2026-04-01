@@ -1,7 +1,8 @@
-CNX Fentanyl Pipeline (New Setup)
-=================================
+"Cartel Decapitation Disrupts Fentanyl Supply Chains" Data and Analysis Pipeline
+================================================================================
 
-This is the primary, single-file reproducible workflow.
+This is the primary, single-file reproducible workflow used to generate the analysis
+data, figures, and table contained in the paper.
 
 Use this script:
 - `repro_pipeline/scripts/00_all_in_one_pipeline_from_monthly_start.R`
@@ -54,7 +55,3 @@ Packages needed
 - ggplot2
 - changepoint
 - scales
-
-Legacy workflow
----------------
-See `README_LEGACY.txt` for the older multi-step pipeline.
