@@ -265,15 +265,6 @@ if (nrow(series_to_end) == 0) {
   stop("No data at or before end_date = ", END_DATE)
 }
 
-reconstructed_roll <- as.numeric(stats::filter(series_monthly$overdose_raw, rep(1, WINDOW), sides = 1))
-rolling_diagnostics <- series_monthly %>%
-  transmute(
-    month,
-    overdose_rolling_12m_observed = overdose_rolling_12m,
-    overdose_rolling_12m_reconstructed = reconstructed_roll,
-    abs_error = abs(overdose_rolling_12m_observed - overdose_rolling_12m_reconstructed)
-  )
-
 readr::write_csv(series_monthly, file.path(PROCESSED_DIR, "series_monthly_from_single_input.csv"))
 readr::write_csv(
   series_monthly %>% select(month, overdose_raw),
@@ -287,7 +278,6 @@ readr::write_csv(
   series_monthly %>% select(month, seizure_lbs_raw),
   file.path(PROCESSED_DIR, "fentanyl_seizures_monthly_from_single_input.csv")
 )
-readr::write_csv(rolling_diagnostics, file.path(TABLE_DIR, "overdose_rolling_reconstruction_diagnostics.csv"))
 
 # ---------------------------------------------------------------------------
 # 2) Figure: scaled overlay (minimal smoothing)
@@ -737,7 +727,6 @@ message("- series_monthly_from_single_input.csv")
 message("- overdose_monthly_from_rolling12.csv")
 message("- shipments_monthly_from_single_input.csv")
 message("- fentanyl_seizures_monthly_from_single_input.csv")
-message("- overdose_rolling_reconstruction_diagnostics.csv")
 message("- plot_scaled_overlay_minimal_smooth_all_to_2025_06.png")
 message("- plot_changepoints_shipments_only.png")
 message("- plot_shipments_loess_policy_lines.png")

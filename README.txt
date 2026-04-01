@@ -31,7 +31,6 @@ What this script does
    - `repro_pipeline/data/processed/overdose_monthly_from_rolling12.csv`
    - `repro_pipeline/data/processed/shipments_monthly_from_single_input.csv`
    - `repro_pipeline/data/processed/fentanyl_seizures_monthly_from_single_input.csv`
-   - `repro_pipeline/output/tables/overdose_rolling_reconstruction_diagnostics.csv`
 
 RStudio quick start
 -------------------
