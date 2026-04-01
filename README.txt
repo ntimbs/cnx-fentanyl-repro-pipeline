@@ -11,11 +11,12 @@ summary statistics table used in the study.
 
 Required raw inputs (source locations in this project)
 ------------------------------------------------------
-1) `overdose_raw.csv`
-2) `Shipment Data/altana_cnx_transactions.csv` **NOTE: Proprietary Data - Aggregated monthly transactions are located in `shipments_monthly.csv`**
-3) `Drug Seizures/nationwide-drugs-fy19-fy22.csv`
-4) `Drug Seizures/nationwide-drugs-fy23-fy26-dec.csv`
-5) `tables/policy_table_updated_all.csv`
+1) `repro_pipeline/data/raw/overdoseDeathsData_cleaned.csv` (CDC-style 12m rolling overdose counts)
+2) `overdose_raw.csv` (monthly overdose counts; generated from item 1 by script 00, or provided directly)
+3) `Shipment Data/altana_cnx_transactions.csv` **NOTE: Proprietary Data - Aggregated monthly transactions are located in `shipments_monthly.csv`**
+4) `Drug Seizures/nationwide-drugs-fy19-fy22.csv`
+5) `Drug Seizures/nationwide-drugs-fy23-fy26-dec.csv`
+6) `tables/policy_table_updated_all.csv`
 
 Pipeline scripts
 ----------------
@@ -29,7 +30,7 @@ Pipeline scripts
    - Writes `overdose_raw.csv` with columns:
      - `date`, `variable`, `raw_count`
    - Example:
-     - `Rscript repro_pipeline/scripts/00_transform_overdose_rolling12_to_monthly.R --input=\"Overdose Data/overdoseDeathsData_cleaned.csv\" --output=\"overdose_raw.csv\" --window=12 --lambda=25`
+     - `Rscript repro_pipeline/scripts/00_transform_overdose_rolling12_to_monthly.R --input=\"repro_pipeline/data/raw/overdoseDeathsData_cleaned.csv\" --output=\"overdose_raw.csv\" --window=12 --lambda=25`
 
 1) `repro_pipeline/scripts/01_build_monthly_series.R`
    - Reads raw overdose, shipment, and seizure files.
@@ -123,7 +124,7 @@ How to run
 From project root:
 
 1) Optional (only if starting from rolling 12-month overdose counts):
-   Rscript repro_pipeline/scripts/00_transform_overdose_rolling12_to_monthly.R --input="Overdose Data/overdoseDeathsData_cleaned.csv" --output="overdose_raw.csv"
+   Rscript repro_pipeline/scripts/00_transform_overdose_rolling12_to_monthly.R --input="repro_pipeline/data/raw/overdoseDeathsData_cleaned.csv" --output="overdose_raw.csv"
 2) Rscript repro_pipeline/scripts/01_build_monthly_series.R
 3) Rscript repro_pipeline/scripts/02_make_figures_tables.R
 
