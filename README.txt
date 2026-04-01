@@ -19,6 +19,18 @@ Required raw inputs (source locations in this project)
 
 Pipeline scripts
 ----------------
+0) `repro_pipeline/scripts/00_transform_overdose_rolling12_to_monthly.R` (optional pre-step)
+   - Use this if your starting overdose file is a CDC-style trailing 12-month
+     count series (for example, `count` by month) and you need monthly counts.
+   - Implements constrained deconvolution:
+     - non-negative monthly counts,
+     - smoothness penalty on second differences,
+     - 12-month rolling identity fit to observed rolling counts.
+   - Writes `overdose_raw.csv` with columns:
+     - `date`, `variable`, `raw_count`
+   - Example:
+     - `Rscript repro_pipeline/scripts/00_transform_overdose_rolling12_to_monthly.R --input=\"Overdose Data/overdoseDeathsData_cleaned.csv\" --output=\"overdose_raw.csv\" --window=12 --lambda=25`
+
 1) `repro_pipeline/scripts/01_build_monthly_series.R`
    - Reads raw overdose, shipment, and seizure files.
    - Copies raw input files into:
@@ -53,15 +65,16 @@ then builds one monthly series per domain (`overdose_raw`, `tx_raw`,
 
 Overdose data (CDC rolling-12-month source -> monthly raw series)
 -----------------------------------------------------------------
-- `overdose_raw.csv` is the input used by this repo. It is expected to contain
-  a monthly raw count column (`raw_count`) and `date`.
-- Upstream (before this repo), CDC VSRR rolling 12-month totals were converted
-  to monthly counts. Conceptually, if `R_t` is the trailing 12-month total and
-  `M_t` is the monthly count, then:
-  - `R_t = M_t + M_(t-1) + ... + M_(t-11)`
-  - `M_t = R_t - R_(t-1) + M_(t-12)` (recursive recovery with initial seed months)
-- This repository does not re-run that inversion step; it uses the already
-  transformed monthly file and:
+- The main pipeline expects `overdose_raw.csv` with `date` + `raw_count`.
+- If your source data are CDC trailing 12-month counts, run:
+  `repro_pipeline/scripts/00_transform_overdose_rolling12_to_monthly.R`
+  first.
+- Inversion logic:
+  - observed rolling series: `R_t = M_t + ... + M_(t-11)`
+  - unknowns include observed months plus 11 latent pre-sample months
+  - solve for monthly `M_t` using non-negative optimization with a smoothness
+    penalty so the recovered monthly path is plausible and reproducible.
+- Then `01_build_monthly_series.R`:
   - parses `date` to month start,
   - keeps synthetic-opioid overdose rows when `variable` is present,
   - sums to one value per month (`overdose_raw`).
@@ -109,8 +122,10 @@ How to run
 ----------
 From project root:
 
-1) Rscript repro_pipeline/scripts/01_build_monthly_series.R
-2) Rscript repro_pipeline/scripts/02_make_figures_tables.R
+1) Optional (only if starting from rolling 12-month overdose counts):
+   Rscript repro_pipeline/scripts/00_transform_overdose_rolling12_to_monthly.R --input="Overdose Data/overdoseDeathsData_cleaned.csv" --output="overdose_raw.csv"
+2) Rscript repro_pipeline/scripts/01_build_monthly_series.R
+3) Rscript repro_pipeline/scripts/02_make_figures_tables.R
 
 R package dependencies
 ----------------------
