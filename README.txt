@@ -4,15 +4,15 @@ CNX Fentanyl Reproducible Analysis Pipeline
 This repository includes a reproducible two-script R pipeline in:
 - `repro_pipeline/scripts`
 
-Goal
-----
-Rebuild the core monthly datasets and reproduce the three key figures plus the
+Purpose
+-------
+Rebuild the core aggregated monthly datasets and reproduce the three key figures plus the
 summary statistics table used in the study.
 
 Required raw inputs (source locations in this project)
 ------------------------------------------------------
 1) `overdose_raw.csv`
-2) `Shipment Data/altana_cnx_transactions.csv`
+2) `Shipment Data/altana_cnx_transactions.csv` **NOTE: Proprietary Data - Aggregated monthly transactions are located in `shipments_monthly.csv`**
 3) `Drug Seizures/nationwide-drugs-fy19-fy22.csv`
 4) `Drug Seizures/nationwide-drugs-fy23-fy26-dec.csv`
 5) `tables/policy_table_updated_all.csv`
@@ -71,8 +71,3 @@ Raw and cleaned CSV availability
   `repro_pipeline/data/processed`
 - Final table CSV for download:
   `repro_pipeline/output/tables`
-
-GitHub note for large file
---------------------------
-The shipment raw file (altana_cnx_transactions.csv) is large (~635 MB). Standard
-GitHub may require Git LFS for this file if you plan to push the raw copy.
