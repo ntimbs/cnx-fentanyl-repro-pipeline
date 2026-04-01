@@ -45,6 +45,66 @@ Pipeline scripts
    - Writes tables to:
      `repro_pipeline/output/tables`
 
+Data construction details
+-------------------------
+The pipeline standardizes all source file column names to lowercase snake_case,
+then builds one monthly series per domain (`overdose_raw`, `tx_raw`,
+`seizure_lbs_raw`) keyed on `month` (first day of month).
+
+Overdose data (CDC rolling-12-month source -> monthly raw series)
+-----------------------------------------------------------------
+- `overdose_raw.csv` is the input used by this repo. It is expected to contain
+  a monthly raw count column (`raw_count`) and `date`.
+- Upstream (before this repo), CDC VSRR rolling 12-month totals were converted
+  to monthly counts. Conceptually, if `R_t` is the trailing 12-month total and
+  `M_t` is the monthly count, then:
+  - `R_t = M_t + M_(t-1) + ... + M_(t-11)`
+  - `M_t = R_t - R_(t-1) + M_(t-12)` (recursive recovery with initial seed months)
+- This repository does not re-run that inversion step; it uses the already
+  transformed monthly file and:
+  - parses `date` to month start,
+  - keeps synthetic-opioid overdose rows when `variable` is present,
+  - sums to one value per month (`overdose_raw`).
+
+Shipment data (Altana transactions -> monthly transaction counts)
+-----------------------------------------------------------------
+- Reads `Shipment Data/altana_cnx_transactions.csv` as character columns first
+  to avoid accidental type coercion.
+- Detects the transaction date field from:
+  - `transaction_date`, `date`, or `tx_date`
+- Parses mixed date-time formats (`ymd_hms`, `ymd`, `mdy`), floors to month,
+  and drops unparseable dates.
+- Aggregates monthly shipments as:
+  - distinct `transaction_id` count if `transaction_id` exists,
+  - otherwise simple row count.
+- Completes the monthly sequence from min to max observed month and fills
+  missing months with `0` shipments.
+
+Fentanyl seizure data (CBP fiscal files -> calendar-month lbs)
+--------------------------------------------------------------
+- Combines the two CBP files:
+  - `nationwide-drugs-fy19-fy22.csv`
+  - `nationwide-drugs-fy23-fy26-dec.csv`
+- Requires these harmonized fields: `fy`, `month_abbv`, `drug_type`,
+  `sum_qty_lbs`.
+- Converts fiscal-year month labels to calendar month:
+  - if month is Oct-Dec (`month_num >= 10`), calendar year = `FY - 1`
+  - else calendar year = `FY`
+- Filters to `drug_type == "Fentanyl"`, converts pounds to numeric, then sums
+  monthly total pounds (`seizure_lbs_raw`).
+- Completes month gaps and fills missing months with `0` lbs.
+
+Merged analysis series
+----------------------
+- `01_build_monthly_series.R` full-joins overdose, shipment, and seizure
+  monthly series by `month`.
+- Also computes first differences for each series:
+  - `d_overdose`, `d_tx`, `d_seizure_lbs`
+- Writes:
+  - full span: `series_monthly_raw.csv`
+  - restricted span through June 2025: `series_monthly_through_2025_06.csv`
+  - coverage summary: `coverage_summary.csv`
+
 How to run
 ----------
 From project root:
