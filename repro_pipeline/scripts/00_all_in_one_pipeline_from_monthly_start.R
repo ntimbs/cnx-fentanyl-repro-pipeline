@@ -1,19 +1,18 @@
 #!/usr/bin/env Rscript
 
-# =============================================================================
-# One-file reproducible pipeline for paper outputs
+# -------------------------------------------------------------------
+# SIMPLE ONE-FILE PIPELINE
+# -------------------------------------------------------------------
+# What this script does:
+# 1) Reads the two required input files.
+# 2) Converts rolling 12-month overdose counts to monthly counts.
+# 3) Scales overdose, shipments, and seizures to 0-1.
+# 4) Produces 3 figures + 1 summary table used in the paper.
 #
-# This script regenerates all analysis artifacts from one monthly input file:
-# - processed analysis datasets
-# - 3 figures
-# - 1 summary table
-#
-# Example run:
-# Rscript repro_pipeline/scripts/00_all_in_one_pipeline_from_monthly_start.R \
-#   --input="repro_pipeline/data/raw/monthly_input_with_rolling_overdose.csv" \
-#   --policy="repro_pipeline/data/raw/policy_table_updated_all.csv" \
-#   --end_date="2025-06-30" --window=12 --lambda=25 --smooth_span=0.075
-# =============================================================================
+# NOTE:
+# - This script assumes your working directory is the repo root.
+# - No helper functions are used so the workflow is easy to follow.
+# -------------------------------------------------------------------
 
 suppressPackageStartupMessages({
   library(dplyr)
@@ -26,505 +25,213 @@ suppressPackageStartupMessages({
   library(scales)
 })
 
-# ---------------------------------------------------------------------------
-# Single-file pipeline
-# - Input: ONE monthly file with shipments, fentanyl seizures, and 12m rolling overdose counts
-# - Transform: recover monthly overdose counts from rolling-12 series
-# - Output: 3 figures + 1 table used in paper
-# ---------------------------------------------------------------------------
+# -----------------------------
+# 0) File paths and parameters
+# -----------------------------
 
-`%||%` <- function(x, y) {
-  if (is.null(x) || length(x) == 0 || all(is.na(x))) y else x
+input_path <- "repro_pipeline/data/raw/monthly_input_with_rolling_overdose.csv"
+policy_path <- "repro_pipeline/data/raw/policy_table_updated_all.csv"
+
+processed_dir <- "repro_pipeline/data/processed"
+figure_dir <- "repro_pipeline/output/figures"
+table_dir <- "repro_pipeline/output/tables"
+
+dir.create(processed_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(figure_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(table_dir, recursive = TRUE, showWarnings = FALSE)
+
+end_month <- as.Date("2025-06-01")
+axis_end_month <- as.Date("2025-07-01")
+smooth_span <- 0.075
+
+# ---------------------------------
+# 1) Read inputs and standardize
+# ---------------------------------
+
+if (!file.exists(input_path)) {
+  stop("Input file not found: ", input_path)
 }
 
-# Returns script path when invoked with Rscript; NA when sourced interactively.
-get_script_path <- function() {
-  args <- commandArgs(trailingOnly = FALSE)
-  file_flag <- "--file="
-  hit <- args[startsWith(args, file_flag)]
-  if (length(hit) == 0) return(NA_character_)
-  normalizePath(sub(file_flag, "", hit[[1]]), mustWork = FALSE)
+if (!file.exists(policy_path)) {
+  stop("Policy file not found: ", policy_path)
 }
 
-# Resolves repository root even if user runs script from nested directories.
-find_root_dir <- function(script_path = NA_character_) {
-  if (!is.na(script_path)) {
-    return(normalizePath(file.path(dirname(script_path), "..", ".."), mustWork = TRUE))
-  }
+series_input <- readr::read_csv(input_path, show_col_types = FALSE, name_repair = "unique_quiet") %>%
+  dplyr::rename_with(~ gsub("^_|_$", "", gsub("[^a-z0-9]+", "_", tolower(.x))))
 
-  cwd <- normalizePath(getwd(), mustWork = TRUE)
-  candidates <- c(
-    cwd,
-    dirname(cwd),
-    dirname(dirname(cwd)),
-    dirname(dirname(dirname(cwd)))
-  )
-  candidates <- unique(candidates)
-  hit <- candidates[file.exists(file.path(candidates, "repro_pipeline"))][1]
-  if (is.na(hit)) return(cwd)
-  normalizePath(hit, mustWork = TRUE)
+policy_input <- readr::read_csv(policy_path, show_col_types = FALSE, name_repair = "unique_quiet") %>%
+  dplyr::rename_with(~ gsub("^_|_$", "", gsub("[^a-z0-9]+", "_", tolower(.x))))
+
+required_cols <- c("month", "tx_raw", "seizure_lbs_raw", "overdose_12m_rolling")
+missing_required <- setdiff(required_cols, names(series_input))
+if (length(missing_required) > 0) {
+  stop("Missing required columns in input file: ", paste(missing_required, collapse = ", "))
 }
 
-# Minimal command-line parser for --name=value arguments.
-parse_arg <- function(name, default = NULL) {
-  key <- paste0("--", name, "=")
-  hit <- commandArgs(trailingOnly = TRUE)
-  hit <- hit[startsWith(hit, key)]
-  if (length(hit) == 0) return(default)
-  sub(key, "", hit[[1]])
-}
-
-# Standardizes column names to lowercase snake_case for robust matching.
-standardize_names <- function(df) {
-  nm <- names(df)
-  nm <- tolower(nm)
-  nm <- gsub("[^a-z0-9]+", "_", nm)
-  nm <- gsub("^_|_$", "", nm)
-  names(df) <- nm
-  df
-}
-
-# Attempts multiple date formats and coerces to month start.
-parse_month_date <- function(x) {
-  out <- suppressWarnings(as.Date(x))
-  na_idx <- is.na(out)
-  if (any(na_idx)) out[na_idx] <- suppressWarnings(ymd(x[na_idx], quiet = TRUE))
-  na_idx <- is.na(out)
-  if (any(na_idx)) out[na_idx] <- suppressWarnings(mdy(x[na_idx], quiet = TRUE))
-  na_idx <- is.na(out)
-  if (any(na_idx)) out[na_idx] <- suppressWarnings(as.Date(paste0(x[na_idx], "-01")))
-  floor_date(out, unit = "month")
-}
-
-# Finds a column from prioritized candidates, with optional explicit override.
-find_col <- function(df, candidates, arg_value = NULL) {
-  if (!is.null(arg_value) && nzchar(arg_value) && arg_value %in% names(df)) return(arg_value)
-  hit <- candidates[candidates %in% names(df)][1]
-  if (is.na(hit)) NA_character_ else hit
-}
-
-# 0-1 rescaling helper for visual comparability across series.
-minmax_scale <- function(x) {
-  rng <- max(x, na.rm = TRUE) - min(x, na.rm = TRUE)
-  if (!is.finite(rng) || rng == 0) rep(NA_real_, length(x)) else (x - min(x, na.rm = TRUE)) / rng
-}
-
-# Design matrix A for rolling sums: A %*% m maps monthly m to rolling totals.
-build_rolling_design <- function(n_obs, window = 12L) {
-  n_unknown <- n_obs + window - 1L
-  A <- matrix(0, nrow = n_obs, ncol = n_unknown)
-  for (t in seq_len(n_obs)) {
-    A[t, t:(t + window - 1L)] <- 1
-  }
-  A
-}
-
-# Second-difference penalty matrix D used to regularize rough monthly paths.
-build_second_difference <- function(n_unknown) {
-  if (n_unknown < 3L) return(matrix(0, nrow = 0, ncol = n_unknown))
-  D <- matrix(0, nrow = n_unknown - 2L, ncol = n_unknown)
-  for (i in seq_len(n_unknown - 2L)) {
-    D[i, i] <- 1
-    D[i, i + 1L] <- -2
-    D[i, i + 2L] <- 1
-  }
-  D
-}
-
-# Recovers monthly overdose counts from rolling-12 counts by constrained
-# deconvolution with smoothness penalty:
-#   min ||A m - R||^2 + lambda ||D m||^2, subject to m >= 0
-# R: observed rolling counts, m: unknown monthly counts.
-recover_monthly_from_rolling <- function(rolling_counts, window = 12L, lambda = 25, maxit = 20000L) {
-  rolling_counts <- as.numeric(rolling_counts)
-  n_obs <- length(rolling_counts)
-  A <- build_rolling_design(n_obs, window = window)
-  n_unknown <- ncol(A)
-  D <- build_second_difference(n_unknown)
-
-  objective <- function(m) {
-    err <- as.vector(A %*% m - rolling_counts)
-    smooth <- if (nrow(D) > 0) as.vector(D %*% m) else numeric(0)
-    sum(err * err) + lambda * sum(smooth * smooth)
-  }
-
-  gradient <- function(m) {
-    g <- 2 * as.vector(crossprod(A, A %*% m - rolling_counts))
-    if (nrow(D) > 0) {
-      g <- g + 2 * lambda * as.vector(crossprod(D, D %*% m))
-    }
-    g
-  }
-
-  m0 <- rep(mean(rolling_counts, na.rm = TRUE) / window, n_unknown)
-  fit <- optim(
-    par = m0,
-    fn = objective,
-    gr = gradient,
-    method = "L-BFGS-B",
-    lower = rep(0, n_unknown),
-    control = list(maxit = maxit)
-  )
-
-  if (!identical(fit$convergence, 0L)) {
-    warning("Rolling-to-monthly optimization did not fully converge (code ", fit$convergence, ").")
-  }
-
-  latent <- fit$par
-  monthly <- latent[window:n_unknown]
-  list(monthly = monthly, convergence = fit$convergence, objective = fit$value)
-}
-
-# ---------------------------------------------------------------------------
-# Paths + options
-# ---------------------------------------------------------------------------
-
-script_path <- get_script_path()
-ROOT_DIR <- find_root_dir(script_path)
-
-PIPE_DIR <- file.path(ROOT_DIR, "repro_pipeline")
-RAW_DIR <- file.path(PIPE_DIR, "data", "raw")
-PROCESSED_DIR <- file.path(PIPE_DIR, "data", "processed")
-OUTPUT_DIR <- file.path(PIPE_DIR, "output")
-FIGURE_DIR <- file.path(OUTPUT_DIR, "figures")
-TABLE_DIR <- file.path(OUTPUT_DIR, "tables")
-dir.create(PROCESSED_DIR, recursive = TRUE, showWarnings = FALSE)
-dir.create(FIGURE_DIR, recursive = TRUE, showWarnings = FALSE)
-dir.create(TABLE_DIR, recursive = TRUE, showWarnings = FALSE)
-
-START_FILE <- parse_arg(
-  "input",
-  default = file.path(RAW_DIR, "monthly_input_with_rolling_overdose.csv")
-)
-POLICY_FILE <- parse_arg(
-  "policy",
-  default = file.path(RAW_DIR, "policy_table_updated_all.csv")
-)
-END_DATE <- as.Date(parse_arg("end_date", default = "2025-06-30"))
-END_MONTH <- floor_date(END_DATE, unit = "month")
-AXIS_END_MONTH <- ceiling_date(END_DATE, unit = "month")
-WINDOW <- as.integer(parse_arg("window", default = "12"))
-LAMBDA <- as.numeric(parse_arg("lambda", default = "25"))
-SMOOTH_SPAN <- as.numeric(parse_arg("smooth_span", default = "0.075"))
-
-# Key runtime controls:
-# - end_date: last month included in figures/table
-# - window: rolling window used in inversion (expected 12 for CDC-style series)
-# - lambda: smoothness penalty (higher = smoother recovered monthly path)
-# - smooth_span: LOESS span used in plotted smooth trends
-if (!file.exists(START_FILE)) {
-  stop(
-    "Missing input monthly file: ", START_FILE, "\n",
-    "Expected a single file with month + shipments + fentanyl seizures + overdose rolling-12 counts.\n",
-    "Pass a custom path with --input=/path/to/file.csv"
-  )
-}
-
-if (is.na(WINDOW) || WINDOW < 2L) stop("--window must be an integer >= 2")
-if (is.na(LAMBDA) || LAMBDA < 0) stop("--lambda must be non-negative")
-if (is.na(SMOOTH_SPAN) || SMOOTH_SPAN <= 0 || SMOOTH_SPAN > 1) stop("--smooth_span must be in (0, 1]")
-
-message("Pipeline settings:")
-message("- input: ", START_FILE)
-message("- policy: ", POLICY_FILE)
-message("- end_date: ", END_DATE)
-message("- inversion window: ", WINDOW)
-message("- inversion lambda: ", LAMBDA)
-message("- plot smooth span: ", SMOOTH_SPAN)
-
-# ---------------------------------------------------------------------------
-# 1) Read one monthly input file and build analysis series
-# ---------------------------------------------------------------------------
-
-starter <- readr::read_csv(START_FILE, show_col_types = FALSE, name_repair = "unique_quiet") %>%
-  standardize_names()
-
-month_col <- find_col(starter, c("month", "date", "month_year"), parse_arg("month_col", default = NULL))
-tx_col <- find_col(starter, c("tx_raw", "shipments", "shipment_count", "transactions", "monthly_transactions", "n_transactions"), parse_arg("tx_col", default = NULL))
-seizure_col <- find_col(starter, c("seizure_lbs_raw", "seizure_lbs", "fentanyl_seizures_lbs", "qty_lbs", "seizures"), parse_arg("seizure_col", default = NULL))
-rolling_col <- find_col(starter, c("overdose_12m_rolling", "overdose_rolling_12m", "rolling_12m_overdose", "count", "rolling_count", "overdose_12m"), parse_arg("rolling_col", default = NULL))
-
-missing_needed <- c(
-  if (is.na(month_col)) "month/date column",
-  if (is.na(tx_col)) "shipments column",
-  if (is.na(seizure_col)) "fentanyl seizures column",
-  if (is.na(rolling_col)) "overdose rolling-12 column"
-)
-if (length(missing_needed) > 0) {
-  stop(
-    "Input file is missing required fields:\n- ",
-    paste(missing_needed, collapse = "\n- "),
-    "\nUse --month_col=, --tx_col=, --seizure_col=, --rolling_col= to override auto-detection."
-  )
-}
-
-# Log detected mappings so users can verify and override if needed.
-message("Detected input columns:")
-message("- month: ", month_col)
-message("- shipments: ", tx_col)
-message("- seizures: ", seizure_col)
-message("- overdose rolling-12: ", rolling_col)
-
-# Monthly aggregation rule:
-# - keep NA if an entire month is missing
-# - otherwise sum values within month (handles duplicated monthly rows)
-series_input <- starter %>%
+series_monthly <- series_input %>%
   mutate(
-    month = parse_month_date(.data[[month_col]]),
-    tx_raw = as.numeric(.data[[tx_col]]),
-    seizure_lbs_raw = as.numeric(.data[[seizure_col]]),
-    overdose_rolling_12m = as.numeric(.data[[rolling_col]])
+    month = as.Date(month),
+    tx_raw = as.numeric(tx_raw),
+    seizure_lbs_raw = as.numeric(seizure_lbs_raw),
+    overdose_12m_rolling = as.numeric(overdose_12m_rolling)
   ) %>%
   filter(!is.na(month)) %>%
   group_by(month) %>%
   summarise(
     tx_raw = if (all(is.na(tx_raw))) NA_real_ else sum(tx_raw, na.rm = TRUE),
     seizure_lbs_raw = if (all(is.na(seizure_lbs_raw))) NA_real_ else sum(seizure_lbs_raw, na.rm = TRUE),
-    overdose_rolling_12m = if (all(is.na(overdose_rolling_12m))) NA_real_ else sum(overdose_rolling_12m, na.rm = TRUE),
+    overdose_12m_rolling = if (all(is.na(overdose_12m_rolling))) NA_real_ else sum(overdose_12m_rolling, na.rm = TRUE),
     .groups = "drop"
   ) %>%
   arrange(month)
 
-if (any(is.na(series_input$overdose_rolling_12m))) {
-  missing_n <- sum(is.na(series_input$overdose_rolling_12m))
-  stop(
-    "Input contains ", missing_n, " month(s) with missing rolling overdose counts. ",
-    "Provide a complete rolling-12 series (or filter to complete months) before inversion."
-  )
+if (any(is.na(series_monthly$overdose_12m_rolling))) {
+  stop("overdose_12m_rolling has missing values. Fill/remove those months before running this script.")
 }
 
-if (nrow(series_input) < WINDOW) {
-  stop("Need at least ", WINDOW, " monthly observations to recover monthly overdose counts from rolling data.")
+# ------------------------------------------------------------
+# 2) Convert rolling 12-month overdoses to monthly overdoses
+# ------------------------------------------------------------
+# Simple equation:
+#   monthly_t = (rolling_t - rolling_{t-1}) + monthly_{t-12}
+#
+# Initialization choice used here:
+# - First 12 months are set to rolling_12m / 12.
+# - Negative recovered values are set to 0.
+
+r <- series_monthly$overdose_12m_rolling
+n <- length(r)
+m <- rep(NA_real_, n)
+
+if (n >= 1) {
+  m[1:min(12, n)] <- r[1:min(12, n)] / 12
+}
+if (n >= 13) {
+  for (i in 13:n) {
+    m[i] <- (r[i] - r[i - 1]) + m[i - 12]
+  }
 }
 
-# Recover monthly overdose counts from the rolling series.
-overdose_fit <- recover_monthly_from_rolling(
-  rolling_counts = series_input$overdose_rolling_12m,
-  window = WINDOW,
-  lambda = LAMBDA
-)
+series_monthly$overdose_raw <- pmax(m, 0)
 
-# Round to whole counts for reporting consistency.
-series_monthly <- series_input %>%
-  mutate(
-    overdose_raw = as.integer(round(overdose_fit$monthly))
-  ) %>%
-  select(month, overdose_raw, tx_raw, seizure_lbs_raw, overdose_rolling_12m)
+series_monthly <- series_monthly %>%
+  select(month, overdose_raw, tx_raw, seizure_lbs_raw, overdose_12m_rolling)
 
 series_to_end <- series_monthly %>%
-  filter(month <= END_MONTH)
+  filter(month <= end_month)
 
 if (nrow(series_to_end) == 0) {
-  stop("No data at or before end_date = ", END_DATE)
+  stop("No observations at or before ", end_month)
 }
 
-readr::write_csv(series_monthly, file.path(PROCESSED_DIR, "series_monthly_from_single_input.csv"))
-readr::write_csv(
-  series_monthly %>% select(month, overdose_raw),
-  file.path(PROCESSED_DIR, "overdose_monthly_from_rolling12.csv")
-)
-readr::write_csv(
-  series_monthly %>% select(month, tx_raw),
-  file.path(PROCESSED_DIR, "shipments_monthly_from_single_input.csv")
-)
-readr::write_csv(
-  series_monthly %>% select(month, seizure_lbs_raw),
-  file.path(PROCESSED_DIR, "fentanyl_seizures_monthly_from_single_input.csv")
-)
+# Write processed analysis data
+readr::write_csv(series_monthly, file.path(processed_dir, "series_monthly_from_single_input.csv"))
+readr::write_csv(series_monthly %>% select(month, overdose_raw), file.path(processed_dir, "overdose_monthly_from_rolling12.csv"))
+readr::write_csv(series_monthly %>% select(month, tx_raw), file.path(processed_dir, "shipments_monthly_from_single_input.csv"))
+readr::write_csv(series_monthly %>% select(month, seizure_lbs_raw), file.path(processed_dir, "fentanyl_seizures_monthly_from_single_input.csv"))
 
-# ---------------------------------------------------------------------------
-# 2) Figure: scaled overlay (minimal smoothing)
-# ---------------------------------------------------------------------------
+# -----------------------------------------
+# 3) Scale all three series to [0, 1]
+# -----------------------------------------
 
-# Scale each series independently to [0,1] so trends are comparable on one axis.
-scaled_long <- series_to_end %>%
+od_min <- min(series_to_end$overdose_raw, na.rm = TRUE)
+od_max <- max(series_to_end$overdose_raw, na.rm = TRUE)
+od_rng <- od_max - od_min
+
+tx_min <- min(series_to_end$tx_raw, na.rm = TRUE)
+tx_max <- max(series_to_end$tx_raw, na.rm = TRUE)
+tx_rng <- tx_max - tx_min
+
+sz_min <- min(series_to_end$seizure_lbs_raw, na.rm = TRUE)
+sz_max <- max(series_to_end$seizure_lbs_raw, na.rm = TRUE)
+sz_rng <- sz_max - sz_min
+
+series_scaled <- series_to_end %>%
   mutate(
-    across(
-      c(overdose_raw, tx_raw, seizure_lbs_raw),
-      minmax_scale,
-      .names = "{.col}_norm"
-    )
-  ) %>%
-  select(month, overdose_raw_norm, tx_raw_norm, seizure_lbs_raw_norm) %>%
+    overdose_scaled = if (is.finite(od_rng) && od_rng > 0) (overdose_raw - od_min) / od_rng else NA_real_,
+    tx_scaled = if (is.finite(tx_rng) && tx_rng > 0) (tx_raw - tx_min) / tx_rng else NA_real_,
+    seizure_scaled = if (is.finite(sz_rng) && sz_rng > 0) (seizure_lbs_raw - sz_min) / sz_rng else NA_real_
+  )
+
+scaled_long <- series_scaled %>%
+  select(month, overdose_scaled, tx_scaled, seizure_scaled) %>%
   pivot_longer(cols = -month, names_to = "series", values_to = "value") %>%
   mutate(
     series = recode(
       series,
-      overdose_raw_norm = "Overdose deaths",
-      tx_raw_norm = "Shipments",
-      seizure_lbs_raw_norm = "Fentanyl seizures (lbs)"
+      overdose_scaled = "Overdose deaths",
+      tx_scaled = "Shipments",
+      seizure_scaled = "Fentanyl seizures"
     )
   )
 
-scaled_long_smooth <- scaled_long %>%
-  filter(!is.na(value)) %>%
-  group_by(series) %>%
-  arrange(month, .by_group = TRUE) %>%
-  group_modify(~ {
-    df <- .x %>% transmute(month, value, x_num = as.numeric(month))
-    if (nrow(df) < 4) return(tibble::tibble(month = df$month, value_smooth = NA_real_))
-    fit <- loess(
-      value ~ x_num,
-      data = df,
-      span = SMOOTH_SPAN,
-      control = loess.control(surface = "direct"),
-      na.action = na.exclude
-    )
-    tibble::tibble(
-      month = df$month,
-      value_smooth = as.numeric(predict(fit, newdata = data.frame(x_num = df$x_num)))
-    )
-  }) %>%
-  ungroup()
+# -----------------------------------------
+# 4) Figure 1: main overlay plot
+# -----------------------------------------
 
-# Fixed visual window used in paper.
-plot_x_start <- as.Date("2018-06-01")
-plot_x_end <- as.Date("2025-06-01")
+# Smooth seizure line separately so the May-2023 marker can sit on the smoothed curve.
+seizure_for_marker <- scaled_long %>%
+  filter(series == "Fentanyl seizures", !is.na(value)) %>%
+  arrange(month) %>%
+  mutate(x_num = as.numeric(month))
 
-# Context band shown in main figure.
-context_windows <- tibble::tribble(
-  ~period, ~xmin, ~xmax, ~fill_col,
-  "Operation Mongoose Azteca", as.Date("2022-08-01"), as.Date("2023-01-05"), "#DCEAF8"
-) %>%
-  mutate(
-    xmin = pmax(xmin, plot_x_start),
-    xmax = pmin(xmax, plot_x_end)
-  ) %>%
-  filter(xmax > xmin)
+marker_date <- as.Date("2023-05-01")
+marker_y <- NA_real_
 
-context_annotation <- context_windows %>%
-  transmute(
-    x = xmin + floor(as.numeric(xmax - xmin) / 2),
-    y = 1.03,
-    label = "Joint U.S.-Mexico Operation"
+if (nrow(seizure_for_marker) >= 4) {
+  seizure_fit <- loess(
+    value ~ x_num,
+    data = seizure_for_marker,
+    span = smooth_span,
+    control = loess.control(surface = "direct"),
+    na.action = na.exclude
   )
-
-# Event marker pinned to seizure curve for May 2023.
-seizure_marker <- scaled_long_smooth %>%
-  filter(series == "Fentanyl seizures (lbs)", month == as.Date("2023-05-01"), !is.na(value_smooth)) %>%
-  transmute(month, value = value_smooth) %>%
-  slice(1)
-
-seizure_annotation <- tibble::tibble(
-  x = as.Date(character()),
-  x_arrow = as.Date(character()),
-  y = numeric(),
-  xend = as.Date(character()),
-  yend = numeric(),
-  label = character()
-)
-
-if (nrow(seizure_marker) > 0) {
-  label_x <- as.Date("2023-10-01")
-  if (label_x < plot_x_start) label_x <- plot_x_start + days(1)
-  if (label_x > plot_x_end) label_x <- plot_x_end - days(1)
-  label_x_arrow <- label_x + days(45)
-  if (label_x_arrow > plot_x_end) label_x_arrow <- plot_x_end - days(1)
-  label_y <- max(0.10, min(0.88, seizure_marker$value[[1]] + 0.02))
-  seizure_annotation <- tibble::tibble(
-    x = label_x,
-    x_arrow = label_x_arrow,
-    y = label_y,
-    xend = seizure_marker$month[[1]],
-    yend = seizure_marker$value[[1]],
-    label = "Los Chapitos Bans\nFentanyl Activities"
-  )
+  marker_y <- as.numeric(stats::predict(seizure_fit, newdata = data.frame(x_num = as.numeric(marker_date))))
 }
 
-# Project color palette used throughout manuscript figures.
+context_start <- as.Date("2022-08-01")
+context_end <- as.Date("2023-01-05")
+
 color_vals <- c(
   "Overdose deaths" = "#E57200",
   "Shipments" = "#5E6B7A",
-  "Fentanyl seizures (lbs)" = "#232D4B"
+  "Fentanyl seizures" = "#232D4B"
 )
 
-plot_scaled_overlay_minimal_smooth_all_to_2025_06 <- ggplot() +
+plot_scaled_overlay <- ggplot() +
   geom_rect(
-    data = context_windows,
-    aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
-    inherit.aes = FALSE,
-    fill = context_windows$fill_col,
+    aes(xmin = context_start, xmax = context_end, ymin = -Inf, ymax = Inf),
+    fill = "#DCEAF8",
     alpha = 0.50,
-    show.legend = FALSE
+    inherit.aes = FALSE
   ) +
-  geom_vline(
-    data = context_windows,
-    aes(xintercept = xmin),
-    linetype = "dotted",
-    linewidth = 0.35,
-    color = "#6C7A89",
-    alpha = 0.9,
-    show.legend = FALSE
-  ) +
-  geom_vline(
-    data = context_windows,
-    aes(xintercept = xmax),
-    linetype = "dotted",
-    linewidth = 0.35,
-    color = "#6C7A89",
-    alpha = 0.9,
-    show.legend = FALSE
-  ) +
-  geom_line(
-    data = scaled_long_smooth,
-    aes(x = month, y = value_smooth, color = series),
+  geom_vline(xintercept = context_start, linetype = "dotted", linewidth = 0.35, color = "#6C7A89", alpha = 0.9) +
+  geom_vline(xintercept = context_end, linetype = "dotted", linewidth = 0.35, color = "#6C7A89", alpha = 0.9) +
+  geom_smooth(
+    data = scaled_long,
+    aes(x = month, y = value, color = series),
+    method = "loess",
+    span = smooth_span,
+    se = FALSE,
     linewidth = 1.0,
     na.rm = TRUE
   ) +
-  geom_point(
-    data = seizure_marker,
-    aes(x = month, y = value),
-    inherit.aes = FALSE,
-    size = 3.2,
-    stroke = 1,
-    color = "#232D4B",
-    fill = "white",
-    shape = 21,
-    alpha = 0.95
-  ) +
-  geom_curve(
-    data = seizure_annotation,
-    aes(x = x_arrow, y = y, xend = xend, yend = yend),
-    inherit.aes = FALSE,
-    curvature = -0.25,
-    arrow = grid::arrow(length = grid::unit(0.16, "cm")),
-    linewidth = 0.6,
-    color = "#232D4B"
-  ) +
   geom_label(
-    data = context_annotation,
+    data = tibble::tibble(
+      x = as.Date("2022-10-18"),
+      y = 1.03,
+      label = "Joint U.S.-Mexico Operation"
+    ),
     aes(x = x, y = y, label = label),
     inherit.aes = FALSE,
     fontface = "bold",
     size = 4.2,
-    color = "#1f1f1f",
     fill = "white",
-    linewidth = 0,
-    label.padding = grid::unit(0.18, "lines")
+    linewidth = 0
   ) +
-  geom_label(
-    data = seizure_annotation,
-    aes(x = x, y = y, label = label),
-    inherit.aes = FALSE,
-    hjust = 0,
-    vjust = -0.4,
-    size = 3.6,
-    color = "#232D4B",
-    fontface = "bold",
-    fill = "white",
-    linewidth = 0,
-    label.padding = grid::unit(0.18, "lines")
-  ) +
-  scale_color_manual(
-    values = color_vals,
-    breaks = c("Overdose deaths", "Shipments", "Fentanyl seizures (lbs)"),
-    labels = c("Overdose deaths", "Shipments", "Fentanyl seizures"),
-    drop = TRUE,
-    name = NULL
-  ) +
-  guides(color = guide_legend(order = 1, nrow = 1, byrow = TRUE), fill = "none") +
+  scale_color_manual(values = color_vals, name = NULL) +
   scale_x_date(
-    limits = c(plot_x_start, plot_x_end),
+    limits = c(as.Date("2018-06-01"), as.Date("2025-06-01")),
     date_breaks = "4 month",
     date_labels = "%b %Y",
     expand = expansion(mult = 0, add = 0)
@@ -536,7 +243,6 @@ plot_scaled_overlay_minimal_smooth_all_to_2025_06 <- ggplot() +
   coord_cartesian(ylim = c(0, 1), clip = "off") +
   labs(
     title = "Fentanyl Precursor Shipments, Seizures, and Overdose Deaths",
-    subtitle = NULL,
     x = "Month",
     y = "Scaled value"
   ) +
@@ -548,43 +254,74 @@ plot_scaled_overlay_minimal_smooth_all_to_2025_06 <- ggplot() +
     axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
     axis.text.y = element_text(size = 12),
     legend.position = "bottom",
-    legend.direction = "horizontal",
-    legend.box = "vertical",
     legend.title = element_blank(),
-    legend.key.width = grid::unit(1.2, "lines"),
-    legend.key.height = grid::unit(0.8, "lines"),
     legend.text = element_text(size = 12),
-    legend.spacing.x = grid::unit(0.2, "cm"),
     plot.margin = margin(t = 22, r = 10, b = 10, l = 10)
   )
 
-# ---------------------------------------------------------------------------
-# 3) Figure: shipments-only changepoint
-# ---------------------------------------------------------------------------
+if (is.finite(marker_y)) {
+  plot_scaled_overlay <- plot_scaled_overlay +
+    geom_point(
+      data = tibble::tibble(month = marker_date, value = marker_y),
+      aes(x = month, y = value),
+      inherit.aes = FALSE,
+      size = 3.2,
+      stroke = 1,
+      color = "#232D4B",
+      fill = "white",
+      shape = 21,
+      alpha = 0.95
+    ) +
+    annotate(
+      "curve",
+      x = as.Date("2023-11-15"),
+      y = max(0.10, min(0.88, marker_y + 0.02)),
+      xend = marker_date,
+      yend = marker_y,
+      curvature = -0.25,
+      arrow = grid::arrow(length = grid::unit(0.16, "cm")),
+      linewidth = 0.6,
+      color = "#232D4B"
+    ) +
+    geom_label(
+      data = tibble::tibble(
+        x = as.Date("2023-10-01"),
+        y = max(0.10, min(0.88, marker_y + 0.02)),
+        label = "Los Chapitos Bans\nFentanyl Activities"
+      ),
+      aes(x = x, y = y, label = label),
+      inherit.aes = FALSE,
+      hjust = 0,
+      vjust = -0.4,
+      size = 3.6,
+      color = "#232D4B",
+      fontface = "bold",
+      fill = "white",
+      linewidth = 0
+    )
+}
+
+# -----------------------------------------
+# 5) Figure 2: shipments + changepoints
+# -----------------------------------------
 
 shipments_monthly <- series_monthly %>%
   select(month, shipments = tx_raw) %>%
-  filter(!is.na(shipments), month <= END_MONTH) %>%
-  arrange(month)
-
-shipments_smooth <- shipments_monthly %>%
+  filter(!is.na(shipments), month <= end_month) %>%
+  arrange(month) %>%
   mutate(x_num = as.numeric(month))
 
-shipments_loess_fit <- loess(
+shipments_fit <- loess(
   shipments ~ x_num,
-  data = shipments_smooth,
-  span = SMOOTH_SPAN,
+  data = shipments_monthly,
+  span = smooth_span,
   control = loess.control(surface = "direct"),
   na.action = na.exclude
 )
 
-shipments_smooth <- shipments_smooth %>%
-  mutate(shipments_smooth = as.numeric(predict(shipments_loess_fit, newdata = data.frame(x_num = x_num))))
+shipments_monthly <- shipments_monthly %>%
+  mutate(shipments_smooth = as.numeric(stats::predict(shipments_fit, newdata = data.frame(x_num = x_num))))
 
-# Changepoint settings aligned with prior analysis:
-# - method = PELT (fast exact search)
-# - penalty = MBIC (more conservative than plain BIC)
-# - minseglen = 6 months (avoid very short segments)
 cp_fit <- changepoint::cpt.meanvar(
   shipments_monthly$shipments,
   method = "PELT",
@@ -594,21 +331,13 @@ cp_fit <- changepoint::cpt.meanvar(
 )
 
 cp_idx <- changepoint::cpts(cp_fit)
-# Drop endpoints so vertical lines mark internal structural shifts only.
 cp_idx <- cp_idx[cp_idx > 0 & cp_idx < nrow(shipments_monthly)]
 
 cp_points <- shipments_monthly %>%
   slice(cp_idx) %>%
-  mutate(
-    x_num = as.numeric(month),
-    shipments_smooth = as.numeric(predict(shipments_loess_fit, newdata = data.frame(x_num = x_num)))
-  ) %>%
   filter(!is.na(shipments_smooth))
 
-ship_axis_start <- min(shipments_monthly$month, na.rm = TRUE)
-ship_axis_end <- AXIS_END_MONTH
-
-plot_changepoints_shipments_only <- ggplot(shipments_smooth, aes(x = month, y = shipments_smooth)) +
+plot_changepoints_shipments_only <- ggplot(shipments_monthly, aes(x = month, y = shipments_smooth)) +
   geom_line(linewidth = 1.0, color = "#2c3e50", alpha = 0.95, na.rm = TRUE) +
   geom_vline(
     data = cp_points,
@@ -622,11 +351,10 @@ plot_changepoints_shipments_only <- ggplot(shipments_smooth, aes(x = month, y = 
     data = cp_points,
     aes(x = month, y = shipments_smooth),
     color = "#d62728",
-    size = 2.0,
-    inherit.aes = FALSE
+    size = 2.0
   ) +
   scale_x_date(
-    limits = c(ship_axis_start, ship_axis_end),
+    limits = c(min(shipments_monthly$month, na.rm = TRUE), axis_end_month),
     date_breaks = "6 month",
     date_labels = "%b %Y",
     expand = expansion(mult = 0, add = 0)
@@ -643,42 +371,34 @@ plot_changepoints_shipments_only <- ggplot(shipments_smooth, aes(x = month, y = 
     axis.text.x = element_text(angle = 45, hjust = 1)
   )
 
-# ---------------------------------------------------------------------------
-# 4) Figure: shipments with policy implementation lines
-# ---------------------------------------------------------------------------
+# -----------------------------------------
+# 6) Figure 3: shipments + policy lines
+# -----------------------------------------
 
 policy_dates <- tibble::tibble(policy_month = as.Date(character()))
-if (file.exists(POLICY_FILE)) {
-  # This block is intentionally permissive on column names so collaborators can
-  # supply slightly different policy table schemas without code edits.
-  policy_raw <- readr::read_csv(POLICY_FILE, show_col_types = FALSE, name_repair = "unique_quiet") %>%
-    standardize_names()
 
-  month_year_col <- find_col(policy_raw, c("month_year", "date", "month"), parse_arg("policy_month_col", default = NULL))
-  jurisdiction_col <- find_col(policy_raw, c("jurisdiction", "entity"), parse_arg("policy_jurisdiction_col", default = NULL))
-
-  if (!is.na(month_year_col) && !is.na(jurisdiction_col)) {
-    policy_dates <- policy_raw %>%
-      mutate(
-        policy_month = as.Date(paste0(.data[[month_year_col]], "-01")),
-        jurisdiction_std = case_when(
-          .data[[jurisdiction_col]] %in% c("US", "USA") ~ "US",
-          .data[[jurisdiction_col]] == "Mexico" ~ "Mexico",
-          .data[[jurisdiction_col]] == "China" ~ "China",
-          .data[[jurisdiction_col]] %in% c("UN", "United Nations") ~ "UN",
-          TRUE ~ NA_character_
-        )
-      ) %>%
-      filter(!is.na(jurisdiction_std), !is.na(policy_month)) %>%
-      filter(policy_month >= ship_axis_start, policy_month <= END_MONTH) %>%
-      distinct(policy_month) %>%
-      arrange(policy_month)
-  }
-} else {
-  message("Policy file not found; shipment-policy figure will render without policy lines.")
+if (all(c("month_year", "jurisdiction") %in% names(policy_input))) {
+  policy_dates <- policy_input %>%
+    mutate(
+      policy_month_a = suppressWarnings(lubridate::ymd(paste0(month_year, "-01"), quiet = TRUE)),
+      policy_month_b = suppressWarnings(lubridate::ymd(month_year, quiet = TRUE)),
+      policy_month_c = suppressWarnings(lubridate::ym(month_year, quiet = TRUE)),
+      policy_month = dplyr::coalesce(policy_month_a, policy_month_b, policy_month_c),
+      jurisdiction_std = case_when(
+        jurisdiction %in% c("US", "USA") ~ "US",
+        jurisdiction == "Mexico" ~ "Mexico",
+        jurisdiction == "China" ~ "China",
+        jurisdiction %in% c("UN", "United Nations") ~ "UN",
+        TRUE ~ NA_character_
+      )
+    ) %>%
+    filter(!is.na(policy_month), !is.na(jurisdiction_std)) %>%
+    filter(policy_month >= min(shipments_monthly$month, na.rm = TRUE), policy_month <= end_month) %>%
+    distinct(policy_month) %>%
+    arrange(policy_month)
 }
 
-plot_shipments_loess_policy_lines <- ggplot(shipments_smooth, aes(x = month, y = shipments_smooth)) +
+plot_shipments_loess_policy_lines <- ggplot(shipments_monthly, aes(x = month, y = shipments_smooth)) +
   geom_line(linewidth = 1.1, color = "#2c3e50", na.rm = TRUE) +
   geom_vline(
     data = policy_dates,
@@ -686,11 +406,10 @@ plot_shipments_loess_policy_lines <- ggplot(shipments_smooth, aes(x = month, y =
     linetype = "dashed",
     linewidth = 0.45,
     color = "black",
-    alpha = 0.85,
-    show.legend = FALSE
+    alpha = 0.85
   ) +
   scale_x_date(
-    limits = c(ship_axis_start, ship_axis_end),
+    limits = c(min(shipments_monthly$month, na.rm = TRUE), axis_end_month),
     date_breaks = "6 month",
     date_labels = "%b %Y",
     expand = expansion(mult = 0, add = 0)
@@ -707,11 +426,10 @@ plot_shipments_loess_policy_lines <- ggplot(shipments_smooth, aes(x = month, y =
     axis.text.x = element_text(angle = 45, hjust = 1)
   )
 
-# ---------------------------------------------------------------------------
-# 5) Table: summary statistics through June 2025
-# ---------------------------------------------------------------------------
+# -----------------------------------------
+# 7) Table: summary statistics
+# -----------------------------------------
 
-# Per-series totals and coverage stats.
 summary_stats <- tibble::tibble(
   series = c("Overdose deaths", "Shipments", "Fentanyl seized (lbs)"),
   start_month = c(
@@ -738,10 +456,8 @@ summary_stats <- tibble::tibble(
 
 common_start <- max(summary_stats$start_month)
 common_end <- min(summary_stats$end_month)
-common_data <- series_to_end %>%
-  filter(month >= common_start, month <= common_end)
+common_data <- series_to_end %>% filter(month >= common_start, month <= common_end)
 
-# Add overlap-window totals where all three series are observed.
 summary_stats <- summary_stats %>%
   mutate(
     common_window_start = common_start,
@@ -754,21 +470,20 @@ summary_stats <- summary_stats %>%
     )
   )
 
-# ---------------------------------------------------------------------------
-# Write outputs
-# ---------------------------------------------------------------------------
+# -----------------------------------------
+# 8) Write figures and table
+# -----------------------------------------
 
-# Figures
 ggsave(
-  filename = file.path(FIGURE_DIR, "plot_scaled_overlay_minimal_smooth_all_to_2025_06.png"),
-  plot = plot_scaled_overlay_minimal_smooth_all_to_2025_06,
+  filename = file.path(figure_dir, "plot_scaled_overlay_minimal_smooth_all_to_2025_06.png"),
+  plot = plot_scaled_overlay,
   width = 12,
   height = 7,
   dpi = 300
 )
 
 ggsave(
-  filename = file.path(FIGURE_DIR, "plot_changepoints_shipments_only.png"),
+  filename = file.path(figure_dir, "plot_changepoints_shipments_only.png"),
   plot = plot_changepoints_shipments_only,
   width = 12,
   height = 6,
@@ -776,29 +491,22 @@ ggsave(
 )
 
 ggsave(
-  filename = file.path(FIGURE_DIR, "plot_shipments_loess_policy_lines.png"),
+  filename = file.path(figure_dir, "plot_shipments_loess_policy_lines.png"),
   plot = plot_shipments_loess_policy_lines,
   width = 12,
   height = 6,
   dpi = 300
 )
 
-# Table
-readr::write_csv(summary_stats, file.path(TABLE_DIR, "summary_statistics_through_2025_06.csv"))
+readr::write_csv(summary_stats, file.path(table_dir, "summary_statistics_through_2025_06.csv"))
 
-message("Single-file pipeline complete.")
-message("Input file: ", START_FILE)
-message("Recovered monthly overdose counts from rolling window = ", WINDOW, ", lambda = ", LAMBDA)
-message("Optimization convergence code: ", overdose_fit$convergence)
-message("Processed outputs written to: ", PROCESSED_DIR)
-message("Figure outputs written to: ", FIGURE_DIR)
-message("Table outputs written to: ", TABLE_DIR)
-message("Files created:")
-message("- series_monthly_from_single_input.csv")
-message("- overdose_monthly_from_rolling12.csv")
-message("- shipments_monthly_from_single_input.csv")
-message("- fentanyl_seizures_monthly_from_single_input.csv")
-message("- plot_scaled_overlay_minimal_smooth_all_to_2025_06.png")
-message("- plot_changepoints_shipments_only.png")
-message("- plot_shipments_loess_policy_lines.png")
-message("- summary_statistics_through_2025_06.csv")
+message("Done.")
+message("Created/updated:")
+message("- repro_pipeline/data/processed/series_monthly_from_single_input.csv")
+message("- repro_pipeline/data/processed/overdose_monthly_from_rolling12.csv")
+message("- repro_pipeline/data/processed/shipments_monthly_from_single_input.csv")
+message("- repro_pipeline/data/processed/fentanyl_seizures_monthly_from_single_input.csv")
+message("- repro_pipeline/output/figures/plot_scaled_overlay_minimal_smooth_all_to_2025_06.png")
+message("- repro_pipeline/output/figures/plot_changepoints_shipments_only.png")
+message("- repro_pipeline/output/figures/plot_shipments_loess_policy_lines.png")
+message("- repro_pipeline/output/tables/summary_statistics_through_2025_06.csv")

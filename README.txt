@@ -25,7 +25,10 @@ Input Files (included in repo)
 What this script does
 ---------------------
 1) Reads one monthly file containing shipments, seizures, and rolling-12 overdoses.
-2) Recovers monthly overdose counts from the rolling-12 overdose series.
+2) Recovers monthly overdose counts from the rolling-12 overdose series using a simple equation:
+   - `monthly_t = (rolling_t - rolling_t-1) + monthly_t-12`
+   - first 12 months are initialized as `rolling_12m / 12`
+   - negative recovered values are set to `0`
 3) Builds analysis series.
 4) Writes processed analysis datasets.
 5) Produces final figures and summary table used in the paper.
@@ -74,7 +77,7 @@ CLI run
 -------
 From repo root:
 
-`Rscript repro_pipeline/scripts/00_all_in_one_pipeline_from_monthly_start.R --input="repro_pipeline/data/raw/monthly_input_with_rolling_overdose.csv" --policy="repro_pipeline/data/raw/policy_table_updated_all.csv" --end_date="2025-06-30" --window=12 --lambda=25 --smooth_span=0.075`
+`Rscript repro_pipeline/scripts/00_all_in_one_pipeline_from_monthly_start.R`
 
 Packages needed
 ---------------
