@@ -29,18 +29,10 @@ suppressPackageStartupMessages({
 # 1) Read inputs and standardize
 # ---------------------------------
 
-if (!file.exists("repro_pipeline/data/raw/monthly_input_with_rolling_overdose.csv")) {
-  stop("Input file not found: repro_pipeline/data/raw/monthly_input_with_rolling_overdose.csv")
-}
-
-if (!file.exists("repro_pipeline/data/raw/policy_table_updated_all.csv")) {
-  stop("Policy file not found: repro_pipeline/data/raw/policy_table_updated_all.csv")
-}
-
-series_input <- readr::read_csv("repro_pipeline/data/raw/monthly_input_with_rolling_overdose.csv", show_col_types = FALSE, name_repair = "unique_quiet") %>%
+series_input <- readr::read_csv("monthly_input_with_rolling_overdose.csv", show_col_types = FALSE, name_repair = "unique_quiet") %>%
   dplyr::rename_with(~ gsub("^_|_$", "", gsub("[^a-z0-9]+", "_", tolower(.x))))
 
-policy_input <- readr::read_csv("repro_pipeline/data/raw/policy_table_updated_all.csv", show_col_types = FALSE, name_repair = "unique_quiet") %>%
+policy_input <- readr::read_csv("policy_table_updated_all.csv", show_col_types = FALSE, name_repair = "unique_quiet") %>%
   dplyr::rename_with(~ gsub("^_|_$", "", gsub("[^a-z0-9]+", "_", tolower(.x))))
 
 required_cols <- c("month", "tx_raw", "seizure_lbs_raw", "overdose_12m_rolling")
@@ -65,10 +57,6 @@ series_monthly <- series_input %>%
     .groups = "drop"
   ) %>%
   arrange(month)
-
-if (any(is.na(series_monthly$overdose_12m_rolling))) {
-  stop("overdose_12m_rolling has missing values. Fill/remove those months before running this script.")
-}
 
 # ------------------------------------------------------------
 # 2) Convert rolling 12-month overdoses to monthly overdoses
@@ -100,17 +88,7 @@ series_monthly <- series_monthly %>%
 
 series_to_end <- series_monthly %>%
   filter(month <= as.Date("2025-06-01"))
-
-if (nrow(series_to_end) == 0) {
-  stop("No observations at or before 2025-06-01")
-}
-
-# Write processed analysis data
-readr::write_csv(series_monthly, "repro_pipeline/data/processed/series_monthly_from_single_input.csv")
-readr::write_csv(series_monthly %>% select(month, overdose_raw), "repro_pipeline/data/processed/overdose_monthly_from_rolling12.csv")
-readr::write_csv(series_monthly %>% select(month, tx_raw), "repro_pipeline/data/processed/shipments_monthly_from_single_input.csv")
-readr::write_csv(series_monthly %>% select(month, seizure_lbs_raw), "repro_pipeline/data/processed/fentanyl_seizures_monthly_from_single_input.csv")
-
+    
 # -----------------------------------------
 # 3) Scale all three series to [0, 1]
 # -----------------------------------------
@@ -456,38 +434,35 @@ summary_stats <- summary_stats %>%
 # -----------------------------------------
 
 ggsave(
-  filename = "repro_pipeline/output/figures/plot_scaled_overlay_minimal_smooth_all_to_2025_06.png",
+  filename = "plot_scaled_overlay_minimal_smooth_all_to_2025_06.png",
   plot = plot_scaled_overlay,
   width = 12,
   height = 7,
-  dpi = 300
+  dpi = 600
 )
 
 ggsave(
-  filename = "repro_pipeline/output/figures/plot_changepoints_shipments_only.png",
+  filename = "plot_changepoints_shipments_only.png",
   plot = plot_changepoints_shipments_only,
   width = 12,
   height = 6,
-  dpi = 300
+  dpi = 600
 )
 
 ggsave(
-  filename = "repro_pipeline/output/figures/plot_shipments_loess_policy_lines.png",
+  filename = "plot_shipments_loess_policy_lines.png",
   plot = plot_shipments_loess_policy_lines,
   width = 12,
   height = 6,
-  dpi = 300
+  dpi = 600
 )
 
-readr::write_csv(summary_stats, "repro_pipeline/output/tables/summary_statistics_through_2025_06.csv")
+readr::write_csv(summary_stats, "summary_statistics_through_2025_06.csv")
 
 message("Done.")
 message("Created/updated:")
-message("- repro_pipeline/data/processed/series_monthly_from_single_input.csv")
-message("- repro_pipeline/data/processed/overdose_monthly_from_rolling12.csv")
-message("- repro_pipeline/data/processed/shipments_monthly_from_single_input.csv")
-message("- repro_pipeline/data/processed/fentanyl_seizures_monthly_from_single_input.csv")
-message("- repro_pipeline/output/figures/plot_scaled_overlay_minimal_smooth_all_to_2025_06.png")
-message("- repro_pipeline/output/figures/plot_changepoints_shipments_only.png")
-message("- repro_pipeline/output/figures/plot_shipments_loess_policy_lines.png")
-message("- repro_pipeline/output/tables/summary_statistics_through_2025_06.csv")
+message("- series_monthly_from_single_input.csv")
+message("- plot_scaled_overlay_minimal_smooth_all_to_2025_06.png")
+message("- plot_changepoints_shipments_only.png")
+message("- plot_shipments_loess_policy_lines.png")
+message("- summary_statistics_through_2025_06.csv")
