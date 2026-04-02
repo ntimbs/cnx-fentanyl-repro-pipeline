@@ -25,41 +25,22 @@ suppressPackageStartupMessages({
   library(scales)
 })
 
-# -----------------------------
-# 0) File paths and parameters
-# -----------------------------
-
-input_path <- "repro_pipeline/data/raw/monthly_input_with_rolling_overdose.csv"
-policy_path <- "repro_pipeline/data/raw/policy_table_updated_all.csv"
-
-processed_dir <- "repro_pipeline/data/processed"
-figure_dir <- "repro_pipeline/output/figures"
-table_dir <- "repro_pipeline/output/tables"
-
-dir.create(processed_dir, recursive = TRUE, showWarnings = FALSE)
-dir.create(figure_dir, recursive = TRUE, showWarnings = FALSE)
-dir.create(table_dir, recursive = TRUE, showWarnings = FALSE)
-
-end_month <- as.Date("2025-06-01")
-axis_end_month <- as.Date("2025-07-01")
-smooth_span <- 0.075
-
 # ---------------------------------
 # 1) Read inputs and standardize
 # ---------------------------------
 
-if (!file.exists(input_path)) {
-  stop("Input file not found: ", input_path)
+if (!file.exists("repro_pipeline/data/raw/monthly_input_with_rolling_overdose.csv")) {
+  stop("Input file not found: repro_pipeline/data/raw/monthly_input_with_rolling_overdose.csv")
 }
 
-if (!file.exists(policy_path)) {
-  stop("Policy file not found: ", policy_path)
+if (!file.exists("repro_pipeline/data/raw/policy_table_updated_all.csv")) {
+  stop("Policy file not found: repro_pipeline/data/raw/policy_table_updated_all.csv")
 }
 
-series_input <- readr::read_csv(input_path, show_col_types = FALSE, name_repair = "unique_quiet") %>%
+series_input <- readr::read_csv("repro_pipeline/data/raw/monthly_input_with_rolling_overdose.csv", show_col_types = FALSE, name_repair = "unique_quiet") %>%
   dplyr::rename_with(~ gsub("^_|_$", "", gsub("[^a-z0-9]+", "_", tolower(.x))))
 
-policy_input <- readr::read_csv(policy_path, show_col_types = FALSE, name_repair = "unique_quiet") %>%
+policy_input <- readr::read_csv("repro_pipeline/data/raw/policy_table_updated_all.csv", show_col_types = FALSE, name_repair = "unique_quiet") %>%
   dplyr::rename_with(~ gsub("^_|_$", "", gsub("[^a-z0-9]+", "_", tolower(.x))))
 
 required_cols <- c("month", "tx_raw", "seizure_lbs_raw", "overdose_12m_rolling")
@@ -118,17 +99,17 @@ series_monthly <- series_monthly %>%
   select(month, overdose_raw, tx_raw, seizure_lbs_raw, overdose_12m_rolling)
 
 series_to_end <- series_monthly %>%
-  filter(month <= end_month)
+  filter(month <= as.Date("2025-06-01"))
 
 if (nrow(series_to_end) == 0) {
-  stop("No observations at or before ", end_month)
+  stop("No observations at or before 2025-06-01")
 }
 
 # Write processed analysis data
-readr::write_csv(series_monthly, file.path(processed_dir, "series_monthly_from_single_input.csv"))
-readr::write_csv(series_monthly %>% select(month, overdose_raw), file.path(processed_dir, "overdose_monthly_from_rolling12.csv"))
-readr::write_csv(series_monthly %>% select(month, tx_raw), file.path(processed_dir, "shipments_monthly_from_single_input.csv"))
-readr::write_csv(series_monthly %>% select(month, seizure_lbs_raw), file.path(processed_dir, "fentanyl_seizures_monthly_from_single_input.csv"))
+readr::write_csv(series_monthly, "repro_pipeline/data/processed/series_monthly_from_single_input.csv")
+readr::write_csv(series_monthly %>% select(month, overdose_raw), "repro_pipeline/data/processed/overdose_monthly_from_rolling12.csv")
+readr::write_csv(series_monthly %>% select(month, tx_raw), "repro_pipeline/data/processed/shipments_monthly_from_single_input.csv")
+readr::write_csv(series_monthly %>% select(month, seizure_lbs_raw), "repro_pipeline/data/processed/fentanyl_seizures_monthly_from_single_input.csv")
 
 # -----------------------------------------
 # 3) Scale all three series to [0, 1]
@@ -182,7 +163,7 @@ if (nrow(seizure_for_marker) >= 4) {
   seizure_fit <- loess(
     value ~ x_num,
     data = seizure_for_marker,
-    span = smooth_span,
+    span = 0.075,
     control = loess.control(surface = "direct"),
     na.action = na.exclude
   )
@@ -211,7 +192,7 @@ plot_scaled_overlay <- ggplot() +
     data = scaled_long,
     aes(x = month, y = value, color = series),
     method = "loess",
-    span = smooth_span,
+    span = 0.075,
     se = FALSE,
     linewidth = 1.0,
     na.rm = TRUE
@@ -307,14 +288,14 @@ if (is.finite(marker_y)) {
 
 shipments_monthly <- series_monthly %>%
   select(month, shipments = tx_raw) %>%
-  filter(!is.na(shipments), month <= end_month) %>%
+  filter(!is.na(shipments), month <= as.Date("2025-06-01")) %>%
   arrange(month) %>%
   mutate(x_num = as.numeric(month))
 
 shipments_fit <- loess(
   shipments ~ x_num,
   data = shipments_monthly,
-  span = smooth_span,
+  span = 0.075,
   control = loess.control(surface = "direct"),
   na.action = na.exclude
 )
@@ -354,7 +335,7 @@ plot_changepoints_shipments_only <- ggplot(shipments_monthly, aes(x = month, y =
     size = 2.0
   ) +
   scale_x_date(
-    limits = c(min(shipments_monthly$month, na.rm = TRUE), axis_end_month),
+    limits = c(min(shipments_monthly$month, na.rm = TRUE), as.Date("2025-07-01")),
     date_breaks = "6 month",
     date_labels = "%b %Y",
     expand = expansion(mult = 0, add = 0)
@@ -393,7 +374,7 @@ if (all(c("month_year", "jurisdiction") %in% names(policy_input))) {
       )
     ) %>%
     filter(!is.na(policy_month), !is.na(jurisdiction_std)) %>%
-    filter(policy_month >= min(shipments_monthly$month, na.rm = TRUE), policy_month <= end_month) %>%
+    filter(policy_month >= min(shipments_monthly$month, na.rm = TRUE), policy_month <= as.Date("2025-06-01")) %>%
     distinct(policy_month) %>%
     arrange(policy_month)
 }
@@ -409,7 +390,7 @@ plot_shipments_loess_policy_lines <- ggplot(shipments_monthly, aes(x = month, y 
     alpha = 0.85
   ) +
   scale_x_date(
-    limits = c(min(shipments_monthly$month, na.rm = TRUE), axis_end_month),
+    limits = c(min(shipments_monthly$month, na.rm = TRUE), as.Date("2025-07-01")),
     date_breaks = "6 month",
     date_labels = "%b %Y",
     expand = expansion(mult = 0, add = 0)
@@ -475,7 +456,7 @@ summary_stats <- summary_stats %>%
 # -----------------------------------------
 
 ggsave(
-  filename = file.path(figure_dir, "plot_scaled_overlay_minimal_smooth_all_to_2025_06.png"),
+  filename = "repro_pipeline/output/figures/plot_scaled_overlay_minimal_smooth_all_to_2025_06.png",
   plot = plot_scaled_overlay,
   width = 12,
   height = 7,
@@ -483,7 +464,7 @@ ggsave(
 )
 
 ggsave(
-  filename = file.path(figure_dir, "plot_changepoints_shipments_only.png"),
+  filename = "repro_pipeline/output/figures/plot_changepoints_shipments_only.png",
   plot = plot_changepoints_shipments_only,
   width = 12,
   height = 6,
@@ -491,14 +472,14 @@ ggsave(
 )
 
 ggsave(
-  filename = file.path(figure_dir, "plot_shipments_loess_policy_lines.png"),
+  filename = "repro_pipeline/output/figures/plot_shipments_loess_policy_lines.png",
   plot = plot_shipments_loess_policy_lines,
   width = 12,
   height = 6,
   dpi = 300
 )
 
-readr::write_csv(summary_stats, file.path(table_dir, "summary_statistics_through_2025_06.csv"))
+readr::write_csv(summary_stats, "repro_pipeline/output/tables/summary_statistics_through_2025_06.csv")
 
 message("Done.")
 message("Created/updated:")
