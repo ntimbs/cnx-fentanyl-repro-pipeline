@@ -12,8 +12,8 @@ suppressPackageStartupMessages({
   library(stringr)
 })
 
-input_path <- "repro_pipeline/replication_minimal/data/overdoseDeathsData_cleaned.csv"
-output_path <- "repro_pipeline/replication_minimal/data/overdose_raw_from_rolling.csv"
+input_path <- "repro_pipeline/data/raw/overdoseDeathsData_cleaned.csv"
+output_path <- "repro_pipeline/data/raw/overdose_raw_from_rolling.csv"
 
 # 12-month rolling window and smoothness penalty for deconvolution.
 window <- 12L

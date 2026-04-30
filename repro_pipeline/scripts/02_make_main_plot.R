@@ -15,9 +15,9 @@ suppressPackageStartupMessages({
   library(scales)
 })
 
-input_series_path <- "repro_pipeline/replication_minimal/data/monthly_input_with_rolling_overdose.csv"
-input_overdose_path <- "repro_pipeline/replication_minimal/data/overdose_raw_from_rolling.csv"
-fig_dir <- "repro_pipeline/replication_minimal/output/figures"
+input_series_path <- "repro_pipeline/data/raw/monthly_input_with_rolling_overdose.csv"
+input_overdose_path <- "repro_pipeline/data/raw/overdose_raw_from_rolling.csv"
+fig_dir <- "repro_pipeline/output/figures"
 dir.create(fig_dir, recursive = TRUE, showWarnings = FALSE)
 
 # Read monthly input panel and transformed overdose series.

@@ -15,12 +15,12 @@ suppressPackageStartupMessages({
   library(ggplot2)
 })
 
-input_series_path <- "repro_pipeline/replication_minimal/data/monthly_input_with_rolling_overdose.csv"
-input_overdose_path <- "repro_pipeline/replication_minimal/data/overdose_raw_from_rolling.csv"
-input_policy_path <- "repro_pipeline/replication_minimal/data/policy_table_updated_all.csv"
+input_series_path <- "repro_pipeline/data/raw/monthly_input_with_rolling_overdose.csv"
+input_overdose_path <- "repro_pipeline/data/raw/overdose_raw_from_rolling.csv"
+input_policy_path <- "repro_pipeline/data/raw/policy_table_updated_all.csv"
 
-fig_dir <- "repro_pipeline/replication_minimal/output/figures"
-tab_dir <- "repro_pipeline/replication_minimal/output/tables"
+fig_dir <- "repro_pipeline/output/figures"
+tab_dir <- "repro_pipeline/output/tables"
 dir.create(fig_dir, recursive = TRUE, showWarnings = FALSE)
 dir.create(tab_dir, recursive = TRUE, showWarnings = FALSE)
 

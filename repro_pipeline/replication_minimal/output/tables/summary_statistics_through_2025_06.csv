@@ -1,4 +1,0 @@
-series,start_month,end_month,months_covered,total_n,common_window_start,common_window_end,common_months,common_total_n
-Overdose deaths,2015-01-01,2025-06-01,126,406281,2018-10-01,2025-06-01,81,352350
-Shipments,2016-01-01,2025-06-01,114,320389,2018-10-01,2025-06-01,81,262555
-Fentanyl seized (lbs),2018-10-01,2025-06-01,81,91657.30069389811,2018-10-01,2025-06-01,81,91657.30069389811

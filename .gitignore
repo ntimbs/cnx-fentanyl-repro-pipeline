@@ -1,22 +1,20 @@
-# Keep large/private raw transactions out of this repo
+# System files
+.DS_Store
+
+# R session artifacts
+.Rhistory
+.RData
+
+# Keep large/private raw transaction file out of repo
 /repro_pipeline/data/raw/altana_cnx_transactions.csv
 
-# Legacy docs/workflow not needed for the new one-file setup
+# Legacy local-only files and scripts
 /README_LEGACY.txt
+/repro_pipeline/data/processed/*
+/repro_pipeline/data/raw/nationwide-drugs-fy19-fy22.csv
+/repro_pipeline/data/raw/nationwide-drugs-fy23-fy26-dec.csv
+/repro_pipeline/data/raw/overdose_raw.csv
 /repro_pipeline/scripts/00_transform_overdose_rolling12_to_monthly.R
 /repro_pipeline/scripts/01_build_monthly_series.R
 /repro_pipeline/scripts/02_make_figures_tables.R
-
-# Legacy raw inputs (new setup uses monthly_input_with_rolling_overdose.csv)
-/repro_pipeline/data/raw/overdoseDeathsData_cleaned.csv
-/repro_pipeline/data/raw/overdose_raw.csv
-/repro_pipeline/data/raw/nationwide-drugs-fy19-fy22.csv
-/repro_pipeline/data/raw/nationwide-drugs-fy23-fy26-dec.csv
-
-# Legacy processed outputs (new setup writes *_from_single_input.csv)
-/repro_pipeline/data/processed/coverage_summary.csv
-/repro_pipeline/data/processed/fentanyl_seizures_monthly.csv
-/repro_pipeline/data/processed/overdose_monthly.csv
-/repro_pipeline/data/processed/series_monthly_raw.csv
-/repro_pipeline/data/processed/series_monthly_through_2025_06.csv
-/repro_pipeline/data/processed/shipments_monthly.csv
+/repro_pipeline/output/figures/plot_scaled_overlay_minimal_smooth.png
