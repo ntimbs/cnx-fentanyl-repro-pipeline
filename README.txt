@@ -1,91 +1,66 @@
-"Cartel Decapitation Disrupts Fentanyl Supply Chains" Data and Analysis Pipeline
-================================================================================
+cnx-fentanyl-repro-pipeline
+===========================
 
-This is the primary, single-file reproducible workflow used to generate the analysis
-data, figures, and table contained in the paper.
+This repository contains two workflows:
 
-Use this script:
+1) `repro_pipeline/replication_minimal/` (recommended for sharing/replication)
+2) `repro_pipeline/scripts/00_all_in_one_pipeline_from_monthly_start.R` (legacy all-in-one workflow)
+
+Recommended Replication Workflow
+--------------------------------
+
+Use the files under:
+
+- `repro_pipeline/replication_minimal/`
+
+### Minimal input files
+
+- `repro_pipeline/replication_minimal/data/overdoseDeathsData_cleaned.csv`
+  - CDC synthetic opioid overdose series in rolling 12-month form.
+- `repro_pipeline/replication_minimal/data/monthly_input_with_rolling_overdose.csv`
+  - Monthly shipments (`tx_raw`) and fentanyl seizures (`seizure_lbs_raw`), plus rolling overdose field.
+- `repro_pipeline/replication_minimal/data/policy_table_updated_all.csv`
+  - Policy month-year table used for shipment-policy overlays.
+
+### Scripts
+
+1) `repro_pipeline/replication_minimal/scripts/01_transform_overdose_rolling12_to_monthly.R`
+   - Reconstructs monthly overdose counts from rolling 12-month CDC counts.
+   - Writes: `repro_pipeline/replication_minimal/data/overdose_raw_from_rolling.csv`
+
+2) `repro_pipeline/replication_minimal/scripts/02_make_main_plot.R`
+   - Creates main paper figure:
+   - `repro_pipeline/replication_minimal/output/figures/plot_scaled_overlay_minimal_smooth_all_to_2025_06.png`
+
+3) `repro_pipeline/replication_minimal/scripts/03_make_supplemental_outputs.R`
+   - Creates supplemental outputs:
+   - `repro_pipeline/replication_minimal/output/figures/plot_shipments_loess_policy_lines.png`
+   - `repro_pipeline/replication_minimal/output/figures/plot_seizures_loess_event_lines.png`
+   - `repro_pipeline/replication_minimal/output/tables/summary_statistics_through_2025_06.csv`
+
+### Run order
+
+From the repo root:
+
+1) `Rscript repro_pipeline/replication_minimal/scripts/01_transform_overdose_rolling12_to_monthly.R`
+2) `Rscript repro_pipeline/replication_minimal/scripts/02_make_main_plot.R`
+3) `Rscript repro_pipeline/replication_minimal/scripts/03_make_supplemental_outputs.R`
+
+Legacy All-in-One Workflow
+--------------------------
+
 - `repro_pipeline/scripts/00_all_in_one_pipeline_from_monthly_start.R`
 
-Input Files (included in repo)
-------------------------------
-1) `repro_pipeline/data/raw/monthly_input_with_rolling_overdose.csv`
-   - Purpose: core monthly input used for analysis and plotting.
-   - Required columns:
-     - `month`: month-year date (first of month preferred).
-     - `tx_raw`: monthly count of precursor shipment transactions.
-     - `seizure_lbs_raw`: monthly fentanyl seizures in pounds.
-     - `overdose_12m_rolling`: monthly trailing 12-month overdose count.
-2) `repro_pipeline/data/raw/policy_table_updated_all.csv`
-   - Purpose: policy event dates used for shipment-policy overlay figure.
-   - Expected fields used by script:
-     - `month_year` (or date-equivalent month field),
-     - `jurisdiction` (`US`, `Mexico`, `China`, `UN`).
+This script is retained for continuity with earlier project versions. It reads raw inputs from `repro_pipeline/data/raw/` and writes processed data/figures/tables to `repro_pipeline/data/processed/` and `repro_pipeline/output/`.
 
-What this script does
----------------------
-1) Reads one monthly file containing shipments, seizures, and rolling-12 overdoses.
-2) Recovers monthly overdose counts from the rolling-12 overdose series using a simple equation:
-   - `monthly_t = (rolling_t - rolling_t-1) + monthly_t-12`
-   - first 12 months are initialized as `rolling_12m / 12`
-   - negative recovered values are set to `0`
-3) Builds analysis series.
-4) Writes processed analysis datasets.
-5) Produces final figures and summary table used in the paper.
+R Packages
+----------
 
-Output Files: Processed Analysis Data
--------------------------------------
-1) `repro_pipeline/data/processed/series_monthly_from_single_input.csv`
-   - Master monthly analysis file.
-   - Contains: `month`, recovered monthly overdoses (`overdose_raw`), shipments (`tx_raw`), seizures (`seizure_lbs_raw`), and original rolling overdose input (`overdose_rolling_12m`).
-2) `repro_pipeline/data/processed/overdose_monthly_from_rolling12.csv`
-   - Recovered monthly overdose series only (`month`, `overdose_raw`).
-3) `repro_pipeline/data/processed/shipments_monthly_from_single_input.csv`
-   - Monthly shipment series only (`month`, `tx_raw`).
-4) `repro_pipeline/data/processed/fentanyl_seizures_monthly_from_single_input.csv`
-   - Monthly fentanyl seizure series only (`month`, `seizure_lbs_raw`).
-
-Output Figures
---------------
-1) `repro_pipeline/output/figures/plot_scaled_overlay_minimal_smooth_all_to_2025_06.png`
-   - Main overlay figure with overdoses, shipments, and seizures scaled to 0-1.
-   - Uses LOESS smoothing (`smooth_span` argument; default `0.075`).
-   - Includes contextual annotation for the operation window and May 2023 seizure-line marker.
-2) `repro_pipeline/output/figures/plot_changepoints_shipments_only.png`
-   - Shipment-only trend with LOESS smoothed line.
-   - Red dashed lines indicate significant PELT/MBIC changepoints (`minseglen = 6`).
-3) `repro_pipeline/output/figures/plot_shipments_loess_policy_lines.png`
-   - Shipment trend with black dashed policy implementation lines overlaid.
-   - Policy lines filtered to date range and jurisdictions of interest.
-
-Output Table
-------------
-1) `repro_pipeline/output/tables/summary_statistics_through_2025_06.csv`
-   - Summary statistics through June 2025 for each series:
-     - coverage start/end month,
-     - months covered,
-     - total counts/quantity,
-     - common overlap window and totals.
-
-RStudio quick start
--------------------
-Open the repo in RStudio and run:
-
-`source("repro_pipeline/scripts/00_all_in_one_pipeline_from_monthly_start.R")`
-
-CLI run
--------
-From repo root:
-
-`Rscript repro_pipeline/scripts/00_all_in_one_pipeline_from_monthly_start.R`
-
-Packages needed
----------------
 - dplyr
 - readr
 - tidyr
-- stringr
 - lubridate
+- stringr
 - ggplot2
-- changepoint
 - scales
+- changepoint
